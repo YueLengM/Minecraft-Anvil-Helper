@@ -316,7 +316,7 @@ def get_weights(tree: Node) -> List[int]:
 def calc_book_order(weights: List[int], leaf: List[Node],
                     books: List[int]) -> Tuple[List[int], int]:
     length = len(books)
-    reamin = books.copy()
+    remain = books.copy()
     # add leaf index to weights list and sort with weights
     indexed = [(i, x, leaf[i + 1]) for i, x in enumerate(weights[1:])]
     ordered = []
@@ -326,7 +326,7 @@ def calc_book_order(weights: List[int], leaf: List[Node],
             x[1], get_main_parent(x[2]).left.penalty + get_main_parent(x[
                 2]).right.penalty + get_main_parent(x[2]).right.value +
             (0 if x[2].parent.is_main_path else books[-1])))
-        curr_book = reamin.pop(0)
+        curr_book = remain.pop(0)
         curr_node = indexed.pop(0)
         get_main_parent(curr_node[2]).right.value += curr_book
         # add sorted leaf index to book values
