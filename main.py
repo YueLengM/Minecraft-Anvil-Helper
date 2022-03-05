@@ -10,7 +10,8 @@ class Node:
     def __init__(self,
                  value: int = 0,
                  penalty: Optional[int] = None,
-                 weight: Optional[int] = None,
+                 l_weight: Optional[int] = None,
+                 r_weight: Optional[int] = None,
                  parent: Optional['Node'] = None,
                  is_right_node: bool = False,
                  is_main_path: bool = False,
@@ -26,12 +27,19 @@ class Node:
         self.is_main_path = is_main_path
         self.is_leaf_node = is_leaf_node
 
-        if weight:
-            self.weight = weight
+        if l_weight:
+            self.l_weight = l_weight
         elif parent:
-            self.weight = parent.weight + 1 if is_right_node else parent.weight
+            self.l_weight = parent.l_weight if is_right_node else parent.l_weight + 1
         else:
-            self.weight = 0
+            self.l_weight = 0
+
+        if r_weight:
+            self.r_weight = r_weight
+        elif parent:
+            self.r_weight = parent.r_weight + 1 if is_right_node else parent.r_weight
+        else:
+            self.r_weight = 0
 
         if parent:
             self.layer = parent.layer + 1
@@ -60,7 +68,7 @@ def _build_tree_string(root: Optional[Node],
     if debug:
         node_repr = '|'.join([
             '{}{}{}|W{}L{}'.format(root.value, delimiter, root.penalty,
-                                   root.weight, root.layer),
+                                   root.r_weight, root.layer),
             '{}{}{}'.format('M' if root.is_main_path else '',
                             'R' if root.is_right_node else '',
                             'B' if root.is_leaf_node else '')
@@ -111,7 +119,7 @@ def _build_tree_string(root: Optional[Node],
 def gen_tree(layer, node_count, book_value) -> Node:
     book_value = sorted(book_value)
     # possible positions for new nodes
-    options: List[List[Node, str, int, int]] = []
+    options: List[List[Node, str, int, int, int]] = []
     min_used = 0
 
     def add_option(parent: Node, dirciton):
@@ -125,14 +133,24 @@ def gen_tree(layer, node_count, book_value) -> Node:
             new_layer_cost = test_penalty(parent)
 
         if dirciton == 'left':
-            options.append([parent, 'left', new_layer_cost, parent.weight])
+            options.append([
+                parent, 'left', new_layer_cost, parent.l_weight + 1,
+                parent.r_weight
+            ])
         elif dirciton == 'right':
-            options.append(
-                [parent, 'right', new_layer_cost, parent.weight + 1])
+            options.append([
+                parent, 'right', new_layer_cost, parent.l_weight,
+                parent.r_weight + 1
+            ])
         elif dirciton == 'both':
-            options.append([parent, 'left', new_layer_cost, parent.weight])
-            options.append(
-                [parent, 'right', new_layer_cost, parent.weight + 1])
+            options.append([
+                parent, 'left', new_layer_cost, parent.l_weight + 1,
+                parent.r_weight
+            ])
+            options.append([
+                parent, 'right', new_layer_cost, parent.l_weight,
+                parent.r_weight + 1
+            ])
 
     # after adding a new node, needs to change penalties for each parent node
     def refresh_penalties(item: Node):
@@ -178,7 +196,7 @@ def gen_tree(layer, node_count, book_value) -> Node:
             item = item.parent
         return 2 * penalty + 1
 
-    root = Node(weight=0, penalty=pow(2, layer) - 1, is_main_path=True)
+    root = Node(r_weight=0, penalty=pow(2, layer) - 1, is_main_path=True)
     add_option(root, 'right')
 
     # building main path (the far left branch)
@@ -192,6 +210,10 @@ def gen_tree(layer, node_count, book_value) -> Node:
 
     remains = node_count - layer
     while remains:
+        # sort option by costs
+        options.sort(key=lambda x: (x[2] + x[4] * book_value[min_used], -x[3]))
+        # print(options)
+
         # adding node to the tree
         opt = options.pop(0)
         p: Node = opt[0]
@@ -217,12 +239,8 @@ def gen_tree(layer, node_count, book_value) -> Node:
             min_used += 1
         else:
             min_used = 0
-        # sort option by costs
-        options.sort(key=lambda x: x[2] + x[3] * book_value[min_used])
 
         # print(root)
-        # print(options)
-
     return root
 
 
@@ -242,6 +260,27 @@ def add_leaf(tree: Node):
                               parent=cuur,
                               is_right_node=True,
                               is_leaf_node=True)
+
+
+def get_leaf(tree: Node) -> List[Node]:
+    queue = [tree]
+    leaves = []
+
+    while queue:
+        cuur = queue.pop(0)
+        if cuur.left:
+            queue.insert(0, cuur.right)
+            queue.insert(0, cuur.left)
+        else:
+            leaves.append(cuur)
+    return leaves
+
+
+def get_main_parent(node: Node) -> Node:
+    curr = node
+    while not curr.is_main_path:
+        curr = curr.parent
+    return curr
 
 
 # total prior work penalties of a tree
@@ -269,20 +308,31 @@ def get_weights(tree: Node) -> List[int]:
             queue.insert(0, cuur.right)
             queue.insert(0, cuur.left)
         else:
-            weights.append(cuur.weight)
+            weights.append(cuur.r_weight)
+    # print(weights)
     return weights
 
 
-def calc_book_order(weights: List[int],
+def calc_book_order(weights: List[int], leaf: List[Node],
                     books: List[int]) -> Tuple[List[int], int]:
     length = len(books)
-
+    reamin = books.copy()
     # add leaf index to weights list and sort with weights
-    indexed = [(x, i) for i, x in enumerate(weights[1:])]
-    indexed.sort(key=lambda x: x[0])
+    indexed = [(i, x, leaf[i + 1]) for i, x in enumerate(weights[1:])]
+    ordered = []
 
-    # add sorted leaf index to book values and sort back to leaf order
-    ordered = [(books[i], indexed[i][1]) for i in range(length)]
+    while indexed:
+        indexed.sort(key=lambda x: (
+            x[1], get_main_parent(x[2]).left.penalty + get_main_parent(x[
+                2]).right.penalty + get_main_parent(x[2]).right.value +
+            (0 if x[2].parent.is_main_path else books[-1])))
+        curr_book = reamin.pop(0)
+        curr_node = indexed.pop(0)
+        get_main_parent(curr_node[2]).right.value += curr_book
+        # add sorted leaf index to book values
+        ordered.append((curr_book, curr_node[0]))
+
+    # sort back to leaf order
     ordered.sort(key=lambda x: x[1])
 
     total = 0
@@ -293,25 +343,19 @@ def calc_book_order(weights: List[int],
 
 
 def fill_in_value(tree: Node, values: List[int]):
-    values = values.copy()
-    values.insert(0, 0)
+    leaf = get_leaf(tree)
 
-    queue = [tree]
-    while queue:
-        cuur = queue.pop(0)
-        if cuur.left:
-            queue.insert(0, cuur.right)
-            queue.insert(0, cuur.left)
-        else:
-            cuur.value = values.pop(0)
-            # propagation upwards
-            if cuur.is_right_node:
-                bubble = cuur
-                while bubble:
-                    bubble = bubble.parent
-                    bubble.value = bubble.left.value + bubble.right.value
-                    if not bubble.is_right_node:
-                        break
+    leaf[0].value = 0
+    for i, v in enumerate(values):
+        leaf[i + 1].value = v
+        if leaf[i + 1].is_right_node:
+            bubble = leaf[i + 1]
+            while bubble:
+                bubble = bubble.parent
+                bubble.value = bubble.left.value + bubble.right.value
+                if not bubble.is_right_node:
+                    break
+    # print([x.value for x in get_leaf(tree)])
 
 
 def get_highest_cost(tree: Node) -> int:
@@ -333,6 +377,9 @@ def main():
     # ipt = '12 12 6 4 4 3 2'
     ipt = ipt.split()
     ipt = [int(x) for x in ipt]
+
+    if not ipt:
+        return
     ipt.sort(reverse=True)
 
     cnt = len(ipt)
@@ -348,7 +395,8 @@ def main():
     penalties = []  # total prior work penalties of each trees
     for i in range(result_length):
         add_leaf(trees[i])
-        base_costs.append(calc_book_order(get_weights(trees[i]), ipt))
+        base_costs.append(
+            calc_book_order(get_weights(trees[i]), get_leaf(trees[i]), ipt))
         penalties.append(get_penalties(trees[i]))
         fill_in_value(trees[i], base_costs[i][0])
 
@@ -369,10 +417,10 @@ def main():
         trees[results_idx[i]].print()
 
         exp = exp_costs[results_idx[i]]
-        print('Total Exp required: {} level{}'.format(exp, 's'[:exp ^ 1]))
+        print('Total Exp required: {} level{}'.format(exp, 's' [:exp ^ 1]))
         highest = max_single_cost[results_idx[i]]
         print('The highest Exp cost step: {} level{}'.format(
-            highest, 's'[:highest ^ 1]))
+            highest, 's' [:highest ^ 1]))
 
         print('-' * 40)
 
